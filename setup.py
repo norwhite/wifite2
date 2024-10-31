@@ -1,13 +1,21 @@
-from distutils.core import setup
+#!/usr/bin/env python
+
+try:
+    from setuptools import setup
+except ImportError:
+    raise ImportError("setuptools is required to install wifite2")
 
 from wifite.config import Configuration
+
+with open('README.md', 'r', encoding='utf-8') as fh:
+    long_description = fh.read()
 
 setup(
     name='wifite',
     version=Configuration.version,
-    author='derv82',
-    author_email='derv82@gmail.com',
-    url='https://github.com/derv82/wifite2',
+    author='kimocoder',
+    author_email='christian@aircrack-ng.org',
+    url='https://github.com/kimocoder/wifite2',
     packages=[
         'wifite',
         'wifite/attack',
@@ -16,24 +24,24 @@ setup(
         'wifite/util',
     ],
     data_files=[
-        ('share/dict', ['wordlist-top4800-probable.txt'])
+        ('share/dict', ['wordlist-probable.txt'])
     ],
-    entry_points={
-        'console_scripts': [
-            'wifite = wifite.wifite:entry_point'
-        ]
-    },
     license='GNU GPLv2',
     scripts=['bin/wifite'],
-    description='Wireless Network Auditor for Linux',
-    #long_description=open('README.md').read(),
-    long_description='''Wireless Network Auditor for Linux.
-
-    Cracks WEP, WPA, and WPS encrypted networks.
-
-    Depends on Aircrack-ng Suite, Tshark (from Wireshark), and various other external tools.''',
-    classifiers = [
-        "Programming Language :: Python :: 2.7",
-        "Programming Language :: Python :: 3"
+    description='Wireless Network Auditor for Linux & Android',
+    long_description=long_description,
+    long_description_content_type='text/markdown',
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.4",
+        "Programming Language :: Python :: 3.5",
+        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
     ]
 )

@@ -1,21 +1,28 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+from enum import Enum
+from .pmkid import AttackPMKID
 from .wep import AttackWEP
 from .wpa import AttackWPA
 from .wps import AttackWPS
-from .pmkid import AttackPMKID
 from ..config import Configuration
+from ..model.target import WPSState
 from ..util.color import Color
 
-class AttackAll(object):
+class Answer(Enum):
+    Skip = 1
+    ExitOrReturn = 2
+    Continue = 3
+    Ignore = 4
 
+class AttackAll(object):
     @classmethod
     def attack_multiple(cls, targets):
-        '''
+        """
         Attacks all given `targets` (list[wifite.model.target]) until user interruption.
         Returns: Number of targets that were attacked (int)
-        '''
+        """
         if any(t.wps for t in targets) and not AttackWPS.can_attack_wps():
             # Warn that WPS attacks are not available.
             Color.pl('{!} {O}Note: WPS attacks are not possible because you do not have {C}reaver{O} nor {C}bully{W}')
@@ -23,14 +30,17 @@ class AttackAll(object):
         attacked_targets = 0
         targets_remaining = len(targets)
         for index, target in enumerate(targets, start=1):
+            if Configuration.attack_max != 0 and index > Configuration.attack_max:
+                print(("Attacked %d targets, stopping because of the --first flag" % Configuration.attack_max))
+                break
             attacked_targets += 1
             targets_remaining -= 1
 
             bssid = target.bssid
             essid = target.essid if target.essid_known else '{O}ESSID unknown{W}'
 
-            Color.pl('\n{+} ({G}%d{W}/{G}%d{W})' % (index, len(targets)) +
-                     ' Starting attacks against {C}%s{W} ({C}%s{W})' % (bssid, essid))
+            Color.pl('\n{+} ({G}%d{W}/{G}%d{W})'
+                     % (index, len(targets)) + ' Starting attacks against {C}%s{W} ({C}%s{W})' % (bssid, essid))
 
             should_continue = cls.attack_single(target, targets_remaining)
             if not should_continue:
@@ -40,10 +50,14 @@ class AttackAll(object):
 
     @classmethod
     def attack_single(cls, target, targets_remaining):
-        '''
+        """
         Attacks a single `target` (wifite.model.target).
         Returns: True if attacks should continue, False otherwise.
-        '''
+        """
+        global attack
+        if 'MGT' in target.authentication:
+            Color.pl("\n{!}{O}Skipping. Target is using {C}WPA-Enterprise {O}and can not be cracked.")
+            return True
 
         attacks = []
 
@@ -58,15 +72,18 @@ class AttackAll(object):
             # WPA can have multiple attack vectors:
 
             # WPS
-            if not Configuration.use_pmkid_only:
-                if target.wps != False and AttackWPS.can_attack_wps():
-                    # Pixie-Dust
-                    if Configuration.wps_pixie:
-                        attacks.append(AttackWPS(target, pixie_dust=True))
+            if not Configuration.use_pmkid_only and target.wps is WPSState.UNLOCKED and AttackWPS.can_attack_wps():
+                # Pixie-Dust
+                if Configuration.wps_pixie:
+                    attacks.append(AttackWPS(target, pixie_dust=True))
 
-                    # PIN attack
-                    if Configuration.wps_pin:
-                        attacks.append(AttackWPS(target, pixie_dust=False))
+                # Null PIN zero-day attack
+                if Configuration.wps_pin:
+                    attacks.append(AttackWPS(target, pixie_dust=False, null_pin=True))
+
+                # PIN attack
+                if Configuration.wps_pin:
+                    attacks.append(AttackWPS(target, pixie_dust=False))
 
             if not Configuration.wps_only:
                 # PMKID
@@ -76,26 +93,36 @@ class AttackAll(object):
                 if not Configuration.use_pmkid_only:
                     attacks.append(AttackWPA(target))
 
-        if len(attacks) == 0:
+        if not attacks:
             Color.pl('{!} {R}Error: {O}Unable to attack: no attacks available')
             return True  # Keep attacking other targets (skip)
 
-        while len(attacks) > 0:
+        while attacks:
+            # Needed by infinite attack mode in order to count how many targets were attacked
+            target.attacked = True
             attack = attacks.pop(0)
             try:
                 result = attack.run()
                 if result:
                     break  # Attack was successful, stop other attacks.
             except Exception as e:
-                Color.pexception(e)
+                # TODO:kimocoder: below is a great way to handle Exception
+                # rather then running full traceback in run of parsing to console.
+                Color.pl('\r {!} {R}Error{W}: %s' % str(e))
+                #Color.pexception(e)         # This was the original one which parses full traceback
+                #Color.pl('\n{!} {R}Exiting{W}\n')      # Another great one for other uasages.
                 continue
             except KeyboardInterrupt:
                 Color.pl('\n{!} {O}Interrupted{W}\n')
                 answer = cls.user_wants_to_continue(targets_remaining, len(attacks))
-                if answer is True:
+                if answer == Answer.Continue:
                     continue  # Keep attacking the same target (continue)
-                elif answer is None:
+                elif answer == Answer.Skip:
                     return True  # Keep attacking other targets (skip)
+                elif answer == Answer.Ignore:
+                    from ..model.result import CrackResult
+                    CrackResult.ignore_target(target)
+                    return True  # Ignore current target and keep attacking other targets (ignore)
                 else:
                     return False  # Stop all attacks (exit)
 
@@ -104,14 +131,16 @@ class AttackAll(object):
 
         return True  # Keep attacking other targets
 
-
     @classmethod
     def user_wants_to_continue(cls, targets_remaining, attacks_remaining=0):
-        '''
+        """
         Asks user if attacks should continue onto other targets
         Returns:
-            True if user wants to continue, False otherwise.
-        '''
+            Answer.Skip if the user wants to skip the current target
+            Answer.Ignore if the user wants to ignore the current target
+            Answer.Continue if the user wants to continue to the next attack on the current target
+            Answer.ExitOrReturn if the user wants to stop the remaining attacks
+        """
         if attacks_remaining == 0 and targets_remaining == 0:
             return  # No targets or attacksleft, drop out
 
@@ -128,22 +157,30 @@ class AttackAll(object):
 
         if attacks_remaining > 0:
             prompt += ' {G}continue{W} attacking,'
-            options += '{G}C{W}{D}, {W}'
+            options += '{G}c{W}{D}, {W}'
 
         if targets_remaining > 0:
             prompt += ' {O}skip{W} to the next target,'
             options += '{O}s{W}{D}, {W}'
 
-        options += '{R}e{W})'
-        prompt += ' or {R}exit{W} %s? {C}' % options
+        prompt += ' skip and {P}ignore{W} current target,'
+        options += '{P}i{W}{D}, {W}'
 
-        from ..util.input import raw_input
-        answer = raw_input(Color.s(prompt)).lower()
+        if Configuration.infinite_mode:
+            options += '{R}r{W})'
+            prompt += ' or {R}return{W} to scanning %s? {C}' % options
+        else:
+            options += '{R}e{W})'
+            prompt += ' or {R}exit{W} %s? {C}' % options
+
+        Color.p(prompt)
+        answer = input().lower()
 
         if answer.startswith('s'):
-            return None  # Skip
-        elif answer.startswith('e'):
-            return False  # Exit
+            return Answer.Skip
+        elif answer.startswith('e') or answer.startswith('r'):
+            return Answer.ExitOrReturn  # Exit/Return
+        elif answer.startswith('i'):
+            return Answer.Ignore  # Ignore
         else:
-            return True  # Continue
-
+            return Answer.Continue  # Continue
